@@ -30,9 +30,8 @@ const char rn2483a[] PROGMEM = "RN2483A";
 const char rn2903[] PROGMEM = "RN2903";
 const char rn2903as[] PROGMEM = "RN2903AS";
 const char samr34[] PROGMEM = "SAMR34";
-const char samr34var[] PROGMEM = "WLR089-CC";
 
-const char *const compare_table[] PROGMEM = {ok, on, off, accepted, mac_tx_ok, mac_rx, mac_err, rn2483, rn2483a, rn2903, rn2903as, samr34, samr34var};
+const char *const compare_table[] PROGMEM = {ok, on, off, accepted, mac_tx_ok, mac_rx, mac_err, rn2483, rn2483a, rn2903, rn2903as, samr34};
 
 #define CMP_OK 0
 #define CMP_ON 1
@@ -46,7 +45,6 @@ const char *const compare_table[] PROGMEM = {ok, on, off, accepted, mac_tx_ok, m
 #define CMP_RN2903 9
 #define CMP_RN2903AS 10
 #define CMP_SAMR34 11
-#define CMP_SAMR34VAR 12
 
 // CMP OK
 const char busy[] PROGMEM = "busy";
@@ -382,12 +380,12 @@ int pgmstrcmp(const char *str1, uint8_t str2Index, uint8_t table = CMP_TABLE)
 
   switch (table) {
   case CMP_ERR_TABLE:
-    strcpy_P(str2, (char *)pgm_read_dword(&(compareerr_table[str2Index])));
+    strcpy_P(str2, (char *)pgm_read_word(&(compareerr_table[str2Index])));
     break;
 
   default:
   case CMP_TABLE:
-    strcpy_P(str2, (char *)pgm_read_dword(&(compare_table[str2Index])));
+    strcpy_P(str2, (char *)pgm_read_word(&(compare_table[str2Index])));
   }
 
   return memcmp(str1, str2, min(strlen(str1), strlen(str2)));
@@ -605,7 +603,7 @@ ttn_response_code_t TheThingsNetwork::getLastError(){
 void TheThingsNetwork::debugPrintIndex(uint8_t index, const char *value)
 {
   char message[100];
-  strcpy_P(message, (char *)pgm_read_dword(&(show_table[index])));
+  strcpy_P(message, (char *)pgm_read_word(&(show_table[index])));
   debugPrint(message);
   if (value)
   {
@@ -619,10 +617,10 @@ void TheThingsNetwork::debugPrintMessage(uint8_t type, uint8_t index, const char
   switch (type)
   {
   case ERR_MESSAGE:
-    strcpy_P(message, (char *)pgm_read_dword(&(error_msg[index])));
+    strcpy_P(message, (char *)pgm_read_word(&(error_msg[index])));
     break;
   case SUCCESS_MESSAGE:
-    strcpy_P(message, (char *)pgm_read_dword(&(success_msg[index])));
+    strcpy_P(message, (char *)pgm_read_word(&(success_msg[index])));
     break;
   }
   debugPrint(message);
@@ -767,7 +765,7 @@ void TheThingsNetwork::reset(bool adr)
   // set DEVEUI as HWEUI
   readResponse(SYS_TABLE, SYS_TABLE, SYS_GET_HWEUI, buffer, sizeof(buffer));
   sendMacSet(MAC_DEVEUI, buffer);
-  // ToDo: Check if setADR command is executed according to input !!
+  // set ADR
   setADR(adr);
 }
 
@@ -797,9 +795,7 @@ bool TheThingsNetwork::personalize(const char *devAddr, const char *nwkSKey, con
   // a sys reset before personalize should only be done in RN2xx3 modules
   // for SAMR34, best not to do it because a mac reset would be required afterwards
   if(resetFirst && getModemType() != TTN_MODEM_TYPE_SAMR34) {
-    // Quick Fix For ADR Enabled by default
-    reset(true);
-    //reset(adr);
+    reset(adr);
   }
   if (strlen(devAddr) != 8 || strlen(appSKey) != 32 || strlen(nwkSKey) != 32)
   {
@@ -807,11 +803,8 @@ bool TheThingsNetwork::personalize(const char *devAddr, const char *nwkSKey, con
     return false;
   }
   sendMacSet(MAC_DEVADDR, devAddr);
-  delay(200);
   sendMacSet(MAC_NWKSKEY, nwkSKey);
-  delay(200);
   sendMacSet(MAC_APPSKEY, appSKey);
-  delay(200);
   return personalize();
 }
 
@@ -846,23 +839,14 @@ bool TheThingsNetwork::provision(const char *appEui, const char *appKey, bool re
     return false;
   }
   readResponse(SYS_TABLE, SYS_TABLE, SYS_GET_HWEUI, buffer, sizeof(buffer));
-  delay(200);
-  // send 'mac set appeui and deveui' on RN modules
-  if(getModemType() == TTN_MODEM_TYPE_RN){
-    sendMacSet(MAC_DEVEUI, buffer);
+  sendMacSet(MAC_DEVEUI, buffer);
+  // send 'mac get appeui' on RN modules
+  if(getModemType() == TTN_MODEM_TYPE_RN)
     sendMacSet(MAC_APPEUI, appEui);
-  }
-    
-  // send 'mac set joineui' on SAMR34-based modules
+  // send 'mac get joineui' on SAMR34-based modules
   else
-  // Set DEVEUI is moved here to manage WLR089-CC with no EUI -- ha1adm
-  // ToDo create input parameter for DEVEUI
-    sendMacSet(MAC_DEVEUI, appEui);
-    delay(200);
     sendMacSet(MAC_JOINEUI, appEui);
-    delay(200);
-    sendMacSet(MAC_APPKEY, appKey);
-    delay(200);
+  sendMacSet(MAC_APPKEY, appKey);
   // 'mac save' is not implemented (and reduntant) in SAMR34 RN parser firmware
   // see: https://github.com/MicrochipTech/atsamr34_lorawan_rn_parser/blob/master/02_command_guide/README.md#limitations
   if(getModemType() == TTN_MODEM_TYPE_RN)
@@ -1112,7 +1096,7 @@ bool TheThingsNetwork::checkValidModuleConnected(bool autoBaudFirst)
     debugPrintMessage(SUCCESS_MESSAGE, SCS_VALID_MODULE);
     return true;                                                // module responded and is valid (recognized/supported)
   }
-  else if(pgmstrcmp(model, CMP_SAMR34) == 0 || pgmstrcmp(model, CMP_SAMR34VAR) == 0)
+  else if(pgmstrcmp(model, CMP_SAMR34) == 0)
   {
     setModemType(TTN_MODEM_TYPE_SAMR34);
     debugPrintMessage(SUCCESS_MESSAGE, SCS_VALID_MODULE);       // module responded and is valid (recognized/supported)
@@ -1125,9 +1109,7 @@ bool TheThingsNetwork::checkValidModuleConnected(bool autoBaudFirst)
 void TheThingsNetwork::configureEU868()
 {
   sendMacSet(MAC_RX2, 3, 869525000);
-  delay(200);
   sendChSet(MAC_CHANNEL_DRRANGE, 1, "0 6");
-  delay(200);
 
   char buf[10];
   uint32_t freq = 867100000;
@@ -1138,21 +1120,15 @@ void TheThingsNetwork::configureEU868()
     {
       sprintf(buf, "%lu", freq);
       sendChSet(MAC_CHANNEL_FREQ, ch, buf);
-      delay(200);
       sendChSet(MAC_CHANNEL_DRRANGE, ch, "0 5");
-      delay(200);
       sendChSet(MAC_CHANNEL_DCYCLE, ch, 499); // 5*0.2% ETSI band G1, total 1%
-      delay(200);
-      setChannelStatus(ch, true);
-      delay(200);
+      setChannelStatus(ch, true);;
       freq = freq + 200000;
     }
     else
     	sendChSet(MAC_CHANNEL_DCYCLE, ch, 299); // 3*0.33% ETSI band G, total 1%
-      delay(200);
   }
   sendMacSet(MAC_PWRIDX, TTN_PWRIDX_EU868);
-  delay(200);
 }
 
 void TheThingsNetwork::configureUS915(uint8_t fsb)
@@ -1481,28 +1457,28 @@ void TheThingsNetwork::sendCommand(uint8_t table, uint8_t index, bool appendSpac
   switch (table)
   {
   case MAC_TABLE:
-    strcpy_P(command, (char *)pgm_read_dword(&(mac_table[index])));
+    strcpy_P(command, (char *)pgm_read_word(&(mac_table[index])));
     break;
   case MAC_GET_SET_TABLE:
-    strcpy_P(command, (char *)pgm_read_dword(&(mac_options[index])));
+    strcpy_P(command, (char *)pgm_read_word(&(mac_options[index])));
     break;
   case MAC_JOIN_TABLE:
-    strcpy_P(command, (char *)pgm_read_dword(&(mac_join_mode[index])));
+    strcpy_P(command, (char *)pgm_read_word(&(mac_join_mode[index])));
     break;
   case MAC_CH_TABLE:
-    strcpy_P(command, (char *)pgm_read_dword(&(mac_ch_options[index])));
+    strcpy_P(command, (char *)pgm_read_word(&(mac_ch_options[index])));
     break;
   case MAC_TX_TABLE:
-    strcpy_P(command, (char *)pgm_read_dword(&(mac_tx_table[index])));
+    strcpy_P(command, (char *)pgm_read_word(&(mac_tx_table[index])));
     break;
   case SYS_TABLE:
-    strcpy_P(command, (char *)pgm_read_dword(&(sys_table[index])));
+    strcpy_P(command, (char *)pgm_read_word(&(sys_table[index])));
     break;
   case RADIO_TABLE:
-    strcpy_P(command, (char *)pgm_read_dword(&(radio_table[index])));
+    strcpy_P(command, (char *)pgm_read_word(&(radio_table[index])));
     break;
   case MAC_RESET_TABLE:
-    strcpy_P(command, (char *)pgm_read_dword(&(mac_reset_table[index])));
+    strcpy_P(command, (char *)pgm_read_word(&(mac_reset_table[index])));
     break;
   default:
     return;
@@ -1585,7 +1561,6 @@ bool TheThingsNetwork::sendChSet(uint8_t index, uint8_t channel, const char *val
   debugPrint(F(" "));
   debugPrintLn(value);
   return waitForOk();
-  delay(200);
 }
 
 bool TheThingsNetwork::sendJoinSet(uint8_t type)
@@ -1598,7 +1573,6 @@ bool TheThingsNetwork::sendJoinSet(uint8_t type)
   modemStream->write(SEND_MSG);
   debugPrintLn();
   return waitForOk();
-  delay(200);
 }
 
 bool TheThingsNetwork::sendPayload(uint8_t mode, uint8_t port, uint8_t *payload, size_t length)
